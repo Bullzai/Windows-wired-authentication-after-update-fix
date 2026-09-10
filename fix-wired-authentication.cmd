@@ -1,0 +1,240 @@
+@echo off
+setlocal EnableExtensions EnableDelayedExpansion
+
+set "LogFile=C:\Windows\Temp\w24H2_WIRED-UPGRADE.LOG"
+set "MigrationPath=HKLM\SOFTWARE\Microsoft\dot3svc\MigrationData"
+set "MarkerPath=HKLM\SOFTWARE\NKT\SoftwarePackages\W24H2-Wired-Upgrade-Fix"
+
+if not exist "C:\Windows\Temp" (
+    mkdir "C:\Windows\Temp" >nul 2>&1
+    if errorlevel 1 goto :Error
+)
+
+call :Log "============================================================"
+call :Log "Windows 11 24H2 Wired Upgrade - dot3svc Migration Reset"
+call :Log "Script started."
+call :Log "============================================================"
+
+rem ============================================================
+rem Get Windows information
+rem ============================================================
+
+for /f "tokens=2,*" %%A in (
+    'reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v ProductName 2^>nul ^| find /i "ProductName"'
+) do set "ProductName=%%B"
+
+for /f "tokens=2,*" %%A in (
+    'reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v DisplayVersion 2^>nul ^| find /i "DisplayVersion"'
+) do set "DisplayVersion=%%B"
+
+for /f "tokens=2,*" %%A in (
+    'reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v CurrentBuild 2^>nul ^| find /i "CurrentBuild"'
+) do set "Build=%%B"
+
+for /f "tokens=3" %%A in (
+    'reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v UBR 2^>nul ^| find /i "UBR"'
+) do set /a UBR=%%A
+
+if not defined DisplayVersion (
+    call :Log "ERROR: Could not read Windows version information."
+    goto :Error
+)
+
+call :Log "Product Name   : !ProductName!"
+call :Log "Display Version: !DisplayVersion!"
+call :Log "Build          : !Build!.!UBR!"
+
+rem ============================================================
+rem Check Windows version and completion marker
+rem ============================================================
+
+if /i not "!DisplayVersion!"=="24H2" (
+    call :Log "Windows 11 24H2 NOT detected."
+    call :Log "No changes were made."
+    call :Log "Script exiting."
+    goto :Success
+)
+
+reg query "%MarkerPath%" >nul 2>&1
+if not errorlevel 1 (
+    call :Log "Windows 11 24H2 detected, but the fix is already applied."
+    call :Log "No changes were made."
+    call :Log "Script exiting."
+    goto :Success
+)
+
+call :Log "Windows 11 24H2 detected."
+call :Log "Proceeding with dot3svc migration reset."
+
+rem ============================================================
+rem Check MigrationData registry key
+rem ============================================================
+
+reg query "%MigrationPath%" >nul 2>&1
+
+if errorlevel 1 (
+    call :Log "MigrationData registry key does not exist."
+    call :Log "Creating registry key..."
+
+    reg add "%MigrationPath%" /f >nul 2>&1
+    if errorlevel 1 (
+        call :Log "ERROR: Failed to create MigrationData registry key."
+        goto :Error
+    )
+
+    call :Log "MigrationData registry key created."
+) else (
+    call :Log "MigrationData registry key exists."
+)
+
+rem ============================================================
+rem Check dot3svc service
+rem ============================================================
+
+sc query "dot3svc" >nul 2>&1
+if errorlevel 1 (
+    call :Log "ERROR: dot3svc service was not found."
+    goto :Error
+)
+
+for /f "tokens=4" %%A in (
+    'sc query "dot3svc" ^| findstr /i "STATE"'
+) do set "ServiceStatus=%%A"
+
+call :Log "dot3svc service found. Current status: !ServiceStatus!"
+
+rem ============================================================
+rem Perform reset three times
+rem ============================================================
+
+for /l %%I in (1,1,3) do (
+    call :Log "------------------------------------------------------------"
+    call :Log "Iteration %%I of 3"
+    call :Log "Resetting dot3svcMigrationDone to 0..."
+
+    reg add "%MigrationPath%" ^
+        /v "dot3svcMigrationDone" ^
+        /t REG_DWORD ^
+        /d 0 ^
+        /f >nul 2>&1
+
+    if errorlevel 1 (
+        call :Log "ERROR: Failed to set dot3svcMigrationDone."
+        goto :Error
+    )
+
+    call :Log "dot3svcMigrationDone successfully set to 0."
+
+    set "RegistryValue="
+
+    for /f "tokens=3" %%A in (
+        'reg query "%MigrationPath%" /v "dot3svcMigrationDone" 2^>nul ^| find /i "dot3svcMigrationDone"'
+    ) do set "RegistryValue=%%A"
+
+    call :Log "Verified dot3svcMigrationDone value: !RegistryValue!"
+
+    if /i not "!RegistryValue!"=="0x0" (
+        call :Log "ERROR: Registry verification failed."
+        goto :Error
+    )
+
+    call :Log "Restarting dot3svc service..."
+
+    sc stop "dot3svc" >nul 2>&1
+    call :WaitForService "STOPPED" 30
+
+    if errorlevel 1 (
+        call :Log "ERROR: dot3svc did not stop successfully."
+        goto :Error
+    )
+
+    sc start "dot3svc" >nul 2>&1
+    if errorlevel 1 (
+        call :Log "ERROR: Failed to start dot3svc."
+        goto :Error
+    )
+
+    call :WaitForService "RUNNING" 30
+
+    if errorlevel 1 (
+        call :Log "ERROR: dot3svc did not reach the RUNNING state."
+        goto :Error
+    )
+
+    call :Log "dot3svc restart completed."
+    call :Log "dot3svc current status: RUNNING"
+
+    if %%I lss 3 (
+        call :Log "Waiting 30 seconds before next iteration..."
+        timeout /t 30 /nobreak >nul
+    )
+)
+
+call :Log "------------------------------------------------------------"
+call :Log "SUCCESS: dot3svcMigrationDone reset to 0 three times."
+call :Log "SUCCESS: dot3svc service restarted three times."
+
+rem ============================================================
+rem Create completion marker
+rem ============================================================
+
+reg add "%MarkerPath%" /f >nul 2>&1
+if errorlevel 1 (
+    call :Log "ERROR: Failed to create completion marker key."
+    goto :Error
+)
+
+reg add "%MarkerPath%" ^
+    /v "Dot1xFixApplied" ^
+    /t REG_DWORD ^
+    /d 1 ^
+    /f >nul 2>&1
+
+if errorlevel 1 (
+    call :Log "ERROR: Failed to create Dot1xFixApplied marker."
+    goto :Error
+)
+
+call :Log "Completion marker successfully created."
+
+:Success
+call :Log "============================================================"
+call :Log "Script completed."
+call :Log "============================================================"
+exit /b 0
+
+:Error
+call :Log "============================================================"
+call :Log "ERROR: Script terminated with an error."
+call :Log "============================================================"
+exit /b 1
+
+rem ============================================================
+rem Functions
+rem ============================================================
+
+:Log
+for /f "tokens=1-3 delims=." %%A in ("%time%") do set "LogTime=%%A.%%B.%%C"
+set "LogMessage=%date% !LogTime! - %~1"
+echo !LogMessage!
+>>"%LogFile%" echo !LogMessage!
+exit /b 0
+
+:WaitForService
+set "ExpectedState=%~1"
+set /a "Retries=%~2"
+
+:WaitForServiceLoop
+set "CurrentState="
+
+for /f "tokens=4" %%A in (
+    'sc query "dot3svc" ^| findstr /i "STATE"'
+) do set "CurrentState=%%A"
+
+if /i "!CurrentState!"=="!ExpectedState!" exit /b 0
+
+set /a Retries-=1
+if !Retries! leq 0 exit /b 1
+
+timeout /t 1 /nobreak >nul
+goto :WaitForServiceLoop
