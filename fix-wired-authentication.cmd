@@ -15,46 +15,6 @@ call :Log "Windows 11 24H2 Wired Upgrade - dot3svc Migration Reset"
 call :Log "Script started."
 call :Log "============================================================"
 
-rem ============================================================
-rem Get Windows information
-rem ============================================================
-
-for /f "tokens=2,*" %%A in (
-    'reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v ProductName 2^>nul ^| find /i "ProductName"'
-) do set "ProductName=%%B"
-
-for /f "tokens=2,*" %%A in (
-    'reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v DisplayVersion 2^>nul ^| find /i "DisplayVersion"'
-) do set "DisplayVersion=%%B"
-
-for /f "tokens=2,*" %%A in (
-    'reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v CurrentBuild 2^>nul ^| find /i "CurrentBuild"'
-) do set "Build=%%B"
-
-for /f "tokens=3" %%A in (
-    'reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion" /v UBR 2^>nul ^| find /i "UBR"'
-) do set /a UBR=%%A
-
-if not defined DisplayVersion (
-    call :Log "ERROR: Could not read Windows version information."
-    goto :Error
-)
-
-call :Log "Product Name   : !ProductName!"
-call :Log "Display Version: !DisplayVersion!"
-call :Log "Build          : !Build!.!UBR!"
-
-rem ============================================================
-rem Check Windows version and completion marker
-rem ============================================================
-
-if /i not "!DisplayVersion!"=="24H2" (
-    call :Log "Windows 11 24H2 NOT detected."
-    call :Log "No changes were made."
-    call :Log "Script exiting."
-    goto :Success
-)
-
 reg query "%MarkerPath%" >nul 2>&1
 if not errorlevel 1 (
     call :Log "Windows 11 24H2 detected, but the fix is already applied."
