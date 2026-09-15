@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
-set "LogFile=C:\Windows\Temp\w24H2_WIRED-UPGRADE.LOG"
+set "LogFile=C:\Windows\Temp\W24H2_wired-fix-setupIni.log"
 set "MigrationPath=HKLM\SOFTWARE\Microsoft\dot3svc\MigrationData"
 set "MarkerPath=HKLM\SOFTWARE\NKT\SoftwarePackages\W24H2-Wired-Upgrade-Fix"
 
@@ -15,15 +15,6 @@ call :Log "Windows 11 24H2 Wired Upgrade - dot3svc Migration Reset"
 call :Log "Script started."
 call :Log "============================================================"
 
-reg query "%MarkerPath%" >nul 2>&1
-if not errorlevel 1 (
-    call :Log "Windows 11 24H2 detected, but the fix is already applied."
-    call :Log "No changes were made."
-    call :Log "Script exiting."
-    goto :Success
-)
-
-call :Log "Windows 11 24H2 detected."
 call :Log "Proceeding with dot3svc migration reset."
 
 rem ============================================================
@@ -145,13 +136,13 @@ if errorlevel 1 (
 )
 
 reg add "%MarkerPath%" ^
-    /v "Dot1xFixApplied" ^
-    /t REG_DWORD ^
-    /d 1 ^
+    /v "Dot1xFixAppliedTimestampSetupIni" ^
+    /t REG_SZ ^
+    /d "%DATE% %TIME:~0,5%" ^
     /f >nul 2>&1
 
 if errorlevel 1 (
-    call :Log "ERROR: Failed to create Dot1xFixApplied marker."
+    call :Log "ERROR: Failed to create Dot1xFixAppliedSetupSetupIni marker."
     goto :Error
 )
 
