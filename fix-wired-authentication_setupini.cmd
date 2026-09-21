@@ -5,6 +5,10 @@ set "LogFile=C:\Windows\Temp\W24H2_wired-fix-setupIni.log"
 set "MigrationPath=HKLM\SOFTWARE\Microsoft\dot3svc\MigrationData"
 set "MarkerPath=HKLM\SOFTWARE\NKT\SoftwarePackages\W24H2-Wired-Upgrade-Fix"
 
+rem ============================================================
+rem Main
+rem ============================================================
+
 if not exist "C:\Windows\Temp" (
     mkdir "C:\Windows\Temp" >nul 2>&1
     if errorlevel 1 goto :Error
@@ -28,6 +32,7 @@ if errorlevel 1 (
     call :Log "Creating registry key..."
 
     reg add "%MigrationPath%" /f >nul 2>&1
+
     if errorlevel 1 (
         call :Log "ERROR: Failed to create MigrationData registry key."
         goto :Error
@@ -43,10 +48,13 @@ rem Check dot3svc service
 rem ============================================================
 
 sc query "dot3svc" >nul 2>&1
+
 if errorlevel 1 (
     call :Log "ERROR: dot3svc service was not found."
     goto :Error
 )
+
+set "ServiceStatus="
 
 for /f "tokens=4" %%A in (
     'sc query "dot3svc" ^| findstr /i "STATE"'
@@ -59,6 +67,7 @@ rem Perform reset three times
 rem ============================================================
 
 for /l %%I in (1,1,3) do (
+
     call :Log "------------------------------------------------------------"
     call :Log "Iteration %%I of 3"
     call :Log "Resetting dot3svcMigrationDone to 0..."
@@ -76,6 +85,10 @@ for /l %%I in (1,1,3) do (
 
     call :Log "dot3svcMigrationDone successfully set to 0."
 
+    rem --------------------------------------------------------
+    rem Verify registry value
+    rem --------------------------------------------------------
+
     set "RegistryValue="
 
     for /f "tokens=3" %%A in (
@@ -89,9 +102,17 @@ for /l %%I in (1,1,3) do (
         goto :Error
     )
 
-    call :Log "Restarting dot3svc service..."
+    rem --------------------------------------------------------
+    rem Stop service
+    rem --------------------------------------------------------
+
+    call :Log "Stopping (SetupINI) dot3svc service..."
 
     sc stop "dot3svc" >nul 2>&1
+
+    rem Give the service a moment to transition.
+    timeout /t 3 /nobreak >nul
+
     call :WaitForService "STOPPED" 30
 
     if errorlevel 1 (
@@ -99,7 +120,16 @@ for /l %%I in (1,1,3) do (
         goto :Error
     )
 
+    call :Log "dot3svc stopped successfully."
+
+    rem --------------------------------------------------------
+    rem Start service
+    rem --------------------------------------------------------
+
+    call :Log "Starting dot3svc service..."
+
     sc start "dot3svc" >nul 2>&1
+
     if errorlevel 1 (
         call :Log "ERROR: Failed to start dot3svc."
         goto :Error
@@ -148,11 +178,23 @@ if errorlevel 1 (
 
 call :Log "Completion marker successfully created."
 
+goto :Success
+
+
+rem ============================================================
+rem Success
+rem ============================================================
+
 :Success
 call :Log "============================================================"
-call :Log "Script completed."
+call :Log "Script completed successfully."
 call :Log "============================================================"
 exit /b 0
+
+
+rem ============================================================
+rem Error
+rem ============================================================
 
 :Error
 call :Log "============================================================"
@@ -160,16 +202,21 @@ call :Log "ERROR: Script terminated with an error."
 call :Log "============================================================"
 exit /b 1
 
+
 rem ============================================================
 rem Functions
 rem ============================================================
 
 :Log
-for /f "tokens=1-3 delims=." %%A in ("%time%") do set "LogTime=%%A.%%B.%%C"
-set "LogMessage=%date% !LogTime! - %~1"
+set "LogTime=%TIME%"
+set "LogTime=%LogTime:,=.%"
+set "LogMessage=%DATE% %LogTime% - %~1"
+
 echo !LogMessage!
 >>"%LogFile%" echo !LogMessage!
+
 exit /b 0
+
 
 :WaitForService
 set "ExpectedState=%~1"
@@ -179,13 +226,19 @@ set /a "Retries=%~2"
 set "CurrentState="
 
 for /f "tokens=4" %%A in (
-    'sc query "dot3svc" ^| findstr /i "STATE"'
+    'sc query "dot3svc" 2^>nul ^| findstr /i "STATE"'
 ) do set "CurrentState=%%A"
 
-if /i "!CurrentState!"=="!ExpectedState!" exit /b 0
+if /i "!CurrentState!"=="!ExpectedState!" (
+    exit /b 0
+)
 
 set /a Retries-=1
-if !Retries! leq 0 exit /b 1
+
+if !Retries! leq 0 (
+    exit /b 1
+)
 
 timeout /t 1 /nobreak >nul
+
 goto :WaitForServiceLoop
